@@ -2,16 +2,28 @@ import { useState, useEffect } from 'react';
 import Head from 'next/head';
 
 export default function Home() {
-  const [cookieInput, setCookieInput] = useState('');
+  // ===== STATE UMUM =====
+  const [activeTab, setActiveTab] = useState('auto');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('converter');
 
-  // Load saved cookies from localStorage
+  // ===== STATE UNTUK CONVERTER =====
+  const [cookieInput, setCookieInput] = useState('');
+
+  // ===== STATE UNTUK SAVED COOKIES (Converter & Checker) =====
   const [savedCookies, setSavedCookies] = useState([]);
   const [newCookieName, setNewCookieName] = useState('');
 
+  // ===== STATE UNTUK CHECKER =====
+  const [checkResults, setCheckResults] = useState({});
+
+  // ===== STATE UNTUK AUTO GENERATE (dari backend) =====
+  const [backendCookies, setBackendCookies] = useState([]); // [{ id, name, cookie, status, token, url, expiry, profile, error }]
+  const [autoGenLoading, setAutoGenLoading] = useState(false);
+  const [fetchingBackend, setFetchingBackend] = useState(true);
+
+  // ===== LOAD DARI LOCALSTORAGE (Converter) =====
   useEffect(() => {
     const stored = localStorage.getItem('netflix_cookies');
     if (stored) {
@@ -21,11 +33,46 @@ export default function Home() {
     }
   }, []);
 
+  // ===== FETCH BACKEND COOKIES (Auto Generate) =====
+  useEffect(() => {
+    const fetchCookies = async () => {
+      setFetchingBackend(true);
+      try {
+        const res = await fetch('/api/cookies');
+        const data = await res.json();
+        if (res.ok && data.cookies) {
+          const list = data.cookies.map((cookieStr, index) => ({
+            id: `backend-${index}`,
+            name: `Cookie ${index + 1}`,
+            cookie: cookieStr.trim(),
+            status: 'idle', // idle | processing | done | error
+            token: null,
+            url: null,
+            expiry: null,
+            profile: null,
+            error: null,
+          }));
+          setBackendCookies(list);
+        } else {
+          setBackendCookies([]);
+        }
+      } catch (_) {
+        setBackendCookies([]);
+      } finally {
+        setFetchingBackend(false);
+      }
+    };
+    if (activeTab === 'auto') {
+      fetchCookies();
+    }
+  }, [activeTab]);
+
   const updateSavedCookies = (newList) => {
     setSavedCookies(newList);
     localStorage.setItem('netflix_cookies', JSON.stringify(newList));
   };
 
+  // ===== FUNGSI SIMPAN COOKIE (Converter) =====
   const handleSaveCookie = () => {
     if (!newCookieName.trim()) {
       alert('Berikan nama untuk akun ini');
@@ -56,36 +103,79 @@ export default function Home() {
     }
   };
 
-  const handleSelectCookie = (cookieStr) => {
-    setCookieInput(cookieStr);
-    document.getElementById('cookie-textarea')?.scrollIntoView({ behavior: 'smooth' });
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setResult(null);
-
+  // ===== FUNGSI PANGGIL API =====
+  const callConvertApi = async (cookieStr) => {
     try {
       const res = await fetch('/api/convert', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cookie: cookieInput.trim() }),
+        body: JSON.stringify({ cookie: cookieStr.trim() }),
       });
-
       const data = await res.json();
-      if (res.ok && data.success) {
-        setResult(data);
-      } else {
-        setError(data.error || data.message || 'Gagal mengonversi cookie');
-        if (data.debug) console.log('Debug:', data.debug);
-      }
-    } catch (err) {
-      setError('Terjadi kesalahan jaringan atau server');
-    } finally {
-      setLoading(false);
+      return { success: res.ok && data.success, data };
+    } catch (_) {
+      return { success: false, data: null };
     }
+  };
+
+  // ===== CONVERTER =====
+  const handleConverterSubmit = async (e) => {
+    e.preventDefault();
+    if (!cookieInput.trim() || !cookieInput.includes('NetflixId=')) {
+      setError('Cookie tidak valid. Pastikan berisi NetflixId.');
+      return;
+    }
+    setActiveTab('converter');
+    setResult(null);
+    setError('');
+    setLoading(true);
+    const result = await callConvertApi(cookieInput);
+    setLoading(false);
+    if (result.success) {
+      setResult(result.data);
+    } else {
+      setError(result.data?.error || 'Gagal mengonversi cookie');
+    }
+  };
+
+  // ===== CHECKER =====
+  const handleCheckCookie = async (cookieStr, cookieId) => {
+    setCheckResults(prev => ({ ...prev, [cookieId]: 'checking' }));
+    const result = await callConvertApi(cookieStr);
+    if (result.success) {
+      setCheckResults(prev => ({ ...prev, [cookieId]: 'valid' }));
+    } else {
+      setCheckResults(prev => ({ ...prev, [cookieId]: 'invalid' }));
+    }
+  };
+
+  // ===== AUTO GENERATE: proses semua cookie dari backend =====
+  const handleAutoGenerateAll = async () => {
+    const pending = backendCookies.filter(c => c.status === 'idle' || c.status === 'error');
+    if (pending.length === 0) {
+      alert('Semua cookie sudah diproses atau tidak ada cookie.');
+      return;
+    }
+    setAutoGenLoading(true);
+    const updated = [...backendCookies];
+    for (let i = 0; i < updated.length; i++) {
+      if (updated[i].status === 'done') continue; // skip yang sudah sukses
+      updated[i].status = 'processing';
+      setBackendCookies([...updated]);
+      const result = await callConvertApi(updated[i].cookie);
+      if (result.success) {
+        updated[i].status = 'done';
+        updated[i].token = result.data.token;
+        updated[i].url = result.data.url;
+        updated[i].expiry = result.data.expiryHuman;
+        updated[i].profile = result.data.profile;
+      } else {
+        updated[i].status = 'error';
+        updated[i].error = result.data?.error || 'Gagal generate token';
+      }
+      setBackendCookies([...updated]);
+    }
+    setAutoGenLoading(false);
   };
 
   const copyToClipboard = (text, label) => {
@@ -93,185 +183,222 @@ export default function Home() {
     alert(`✅ ${label} disalin ke clipboard!`);
   };
 
+  // ===== RENDER =====
   return (
     <>
       <Head>
-        <title>Netflix Cookie → NFToken Converter</title>
-        <meta name="description" content="Konversi cookie Netflix menjadi link NFToken dengan cepat dan mudah." />
+        <title>NFTOKEN - Netflix Cookie Converter</title>
+        <meta name="description" content="Konversi cookie Netflix menjadi link NFToken." />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
       <div className="container">
-        {/* ===== HEADER ===== */}
+        {/* HEADER */}
         <header>
           <div className="logo">
             <span className="logo-icon">▶</span>
             <span className="logo-text">NFTOKEN</span>
           </div>
-          <p className="tagline">AUTO GENERATOR</p>
+          <span className="tagline">AUTO GENERATOR</span>
         </header>
 
-        {/* ===== TAB NAVIGATION ===== */}
+        {/* TABS */}
         <div className="tabs">
-          <button 
-            className={`tab ${activeTab === 'auto' ? 'active' : ''}`}
-            onClick={() => setActiveTab('auto')}
-          >
+          <button className={`tab ${activeTab === 'auto' ? 'active' : ''}`} onClick={() => setActiveTab('auto')}>
             AUTO GENERATE
           </button>
-          <button 
-            className={`tab ${activeTab === 'converter' ? 'active' : ''}`}
-            onClick={() => setActiveTab('converter')}
-          >
+          <button className={`tab ${activeTab === 'converter' ? 'active' : ''}`} onClick={() => setActiveTab('converter')}>
             CONVERTER
           </button>
-          <button 
-            className={`tab ${activeTab === 'checker' ? 'active' : ''}`}
-            onClick={() => setActiveTab('checker')}
-          >
+          <button className={`tab ${activeTab === 'checker' ? 'active' : ''}`} onClick={() => setActiveTab('checker')}>
             CHECKER
           </button>
         </div>
 
-        {/* ===== MAIN CONTENT ===== */}
-        <div className="main-content">
-          <div className="section-label">RAW COOKIES</div>
-          <div className="char-counter">{cookieInput.length} CHARS</div>
+        {/* ============================================ */}
+        {/* TAB: AUTO GENERATE (dari backend) */}
+        {/* ============================================ */}
+        {activeTab === 'auto' && (
+          <div className="tab-content">
+            <div className="section-label">📋 DAFTAR COOKIE DARI BACKEND</div>
+            <p className="hint">
+              Cookie diambil dari file <code>data/cookies.json</code> di repo. 
+              {backendCookies.length > 0 && ` Ditemukan ${backendCookies.length} cookie.`}
+            </p>
 
-          {/* ===== SAVED COOKIES ===== */}
-          {savedCookies.length > 0 && (
-            <div className="saved-section">
-              <div className="saved-list">
-                {savedCookies.map((item) => (
-                  <div key={item.id} className="saved-item">
-                    <span className="saved-name" onClick={() => handleSelectCookie(item.cookie)}>
-                      {item.name}
-                    </span>
-                    <button onClick={() => handleSelectCookie(item.cookie)} className="btn-use" title="Gunakan">
-                      🔄
-                    </button>
-                    <button onClick={() => handleDeleteCookie(item.id)} className="btn-delete" title="Hapus">
-                      ✕
-                    </button>
-                  </div>
-                ))}
+            {fetchingBackend ? (
+              <div className="loading-indicator">⏳ Memuat daftar cookie...</div>
+            ) : backendCookies.length === 0 ? (
+              <p className="empty-msg">
+                Belum ada cookie di <code>data/cookies.json</code>. 
+                Tambahkan cookie di file tersebut dan redeploy.
+              </p>
+            ) : (
+              <>
+                <div className="upload-area">
+                  <button className="btn-generate-all" onClick={handleAutoGenerateAll} disabled={autoGenLoading || backendCookies.every(c => c.status === 'done')}>
+                    {autoGenLoading ? '⏳ Memproses...' : '⚡ Generate Semua'}
+                  </button>
+                  <span style={{ fontSize: '13px', color: '#6b7280', marginLeft: '8px' }}>
+                    {backendCookies.filter(c => c.status === 'done').length} / {backendCookies.length} selesai
+                  </span>
+                </div>
+
+                <div className="cookie-list">
+                  {backendCookies.map((item) => (
+                    <div key={item.id} className="cookie-card auto-card">
+                      <div className="card-header">
+                        <span className="card-name">{item.name}</span>
+                        <span className={`card-status ${item.status}`}>
+                          {item.status === 'idle' && '⏹️ Siap'}
+                          {item.status === 'processing' && '⏳ Memproses...'}
+                          {item.status === 'done' && '✅ Selesai'}
+                          {item.status === 'error' && '❌ Gagal'}
+                        </span>
+                      </div>
+                      {item.status === 'done' && item.url && (
+                        <div className="card-result">
+                          <div className="result-row">
+                            <span className="result-label">🔗 URL</span>
+                            <a href={item.url} target="_blank" rel="noopener noreferrer" className="result-link">{item.url}</a>
+                            <button onClick={() => copyToClipboard(item.url, 'Link')} className="copy-btn">📋</button>
+                          </div>
+                          <div className="result-row">
+                            <span className="result-label">⏰ Kadaluarsa</span>
+                            <span className="result-value">{item.expiry || 'Tidak diketahui'}</span>
+                          </div>
+                          {item.profile && (
+                            <div className="result-row">
+                              <span className="result-label">🌍 Negara</span>
+                              <span className="result-value">{item.profile.country}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {item.status === 'error' && (
+                        <div className="card-error">{item.error}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ============================================ */}
+        {/* TAB: CONVERTER (sama seperti sebelumnya) */}
+        {/* ============================================ */}
+        {activeTab === 'converter' && (
+          <div className="tab-content">
+            <div className="section-label">RAW COOKIES</div>
+            <div className="char-counter">{cookieInput.length} CHARS</div>
+
+            {savedCookies.length > 0 && (
+              <div className="saved-section">
+                <div className="saved-list">
+                  {savedCookies.map((item) => (
+                    <div key={item.id} className="saved-item">
+                      <span className="saved-name" onClick={() => setCookieInput(item.cookie)}>
+                        {item.name}
+                      </span>
+                      <button onClick={() => setCookieInput(item.cookie)} className="btn-use" title="Gunakan">📋</button>
+                      <button onClick={() => handleDeleteCookie(item.id)} className="btn-delete" title="Hapus">✕</button>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* ===== TEXTAREA ===== */}
-          <form onSubmit={handleSubmit}>
-            <textarea
-              id="cookie-textarea"
-              rows={6}
-              placeholder="Paste cookie disini. Support 3 format:&#10;1. JSON Array: [{'name':'NetflixId','value':'xxx'}]&#10;2. JSON Object: {'NetflixId':'yyy'}&#10;3. String: NetflixId=xxx; SecureNetflixId=yyy"
-              value={cookieInput}
-              onChange={(e) => setCookieInput(e.target.value)}
-              disabled={loading}
-            />
+            <form onSubmit={handleConverterSubmit}>
+              <textarea
+                rows={6}
+                placeholder="Paste cookie disini. Support 3 format:&#10;1. JSON Array: [{'name':'NetflixId','value':'xxx'}]&#10;2. JSON Object: {'NetflixId':'yyy'}&#10;3. String: NetflixId=xxx; SecureNetflixId=yyy"
+                value={cookieInput}
+                onChange={(e) => setCookieInput(e.target.value)}
+                disabled={loading}
+              />
 
-            <div className="form-actions">
-              <div className="save-section">
-                <input
-                  type="text"
-                  placeholder="Nama akun (contoh: Akun Pribadi)"
-                  value={newCookieName}
-                  onChange={(e) => setNewCookieName(e.target.value)}
-                  disabled={loading}
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveCookie}
-                  disabled={loading || !cookieInput.trim() || !newCookieName.trim()}
-                  className="btn-save"
-                >
-                  💾 Simpan
+              <div className="form-actions">
+                <div className="save-section">
+                  <input
+                    type="text"
+                    placeholder="Nama akun (contoh: Akun Pribadi)"
+                    value={newCookieName}
+                    onChange={(e) => setNewCookieName(e.target.value)}
+                    disabled={loading}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveCookie}
+                    disabled={loading || !cookieInput.trim() || !newCookieName.trim()}
+                    className="btn-save"
+                  >
+                    💾 Simpan
+                  </button>
+                </div>
+                <button type="submit" disabled={loading || !cookieInput.trim()} className="btn-forge">
+                  {loading ? '⏳ MEMPROSES...' : '⚡ FORGE TOKEN'}
                 </button>
               </div>
-              <button type="submit" disabled={loading || !cookieInput.trim()} className="btn-forge">
-                {loading ? '⏳ MEMPROSES...' : '⚡ FORGE TOKEN'}
-              </button>
-            </div>
-          </form>
+            </form>
 
-          {/* ===== ERROR ===== */}
-          {error && (
-            <div className="error-box">
-              <strong>❌ Error:</strong> {error}
-            </div>
-          )}
+            {error && <div className="error-box"><strong>❌ Error:</strong> {error}</div>}
+            {result && <ResultDisplay result={result} copyToClipboard={copyToClipboard} />}
+          </div>
+        )}
 
-          {/* ===== RESULT ===== */}
-          {result && (
-            <div className="result-box">
-              <div className="result-header">
-                <span className="result-badge">✅ SUKSES!</span>
-              </div>
+        {/* ============================================ */}
+        {/* TAB: CHECKER (sama seperti sebelumnya) */}
+        {/* ============================================ */}
+        {activeTab === 'checker' && (
+          <div className="tab-content">
+            <div className="section-label">🔍 CEK VALIDITAS COOKIE</div>
+            {savedCookies.length === 0 ? (
+              <p className="empty-msg">Belum ada cookie tersimpan. Gunakan tab CONVERTER untuk menambahkan.</p>
+            ) : (
+              <div className="cookie-grid">
+                {savedCookies.map((item) => {
+                  const status = checkResults[item.id];
+                  let statusLabel = '';
+                  let statusColor = '';
+                  if (status === 'checking') { statusLabel = '⏳ Checking...'; statusColor = '#f59e0b'; }
+                  else if (status === 'valid') { statusLabel = '✅ Valid'; statusColor = '#10b981'; }
+                  else if (status === 'invalid') { statusLabel = '❌ Invalid'; statusColor = '#ef4444'; }
+                  else { statusLabel = '⏹️ Belum dicek'; statusColor = '#6b7280'; }
 
-              <div className="result-item">
-                <span className="result-label">🔗 URL LOGIN</span>
-                <div className="result-value-wrap">
-                  <a href={result.url} target="_blank" rel="noopener noreferrer" className="result-link">
-                    {result.url}
-                  </a>
-                  <button onClick={() => copyToClipboard(result.url, 'Link')} className="copy-btn">📋</button>
-                </div>
-              </div>
-
-              <div className="result-item">
-                <span className="result-label">⏰ KADALUARSA</span>
-                <span className="result-value">{result.expiryHuman}</span>
-              </div>
-
-              <div className="result-item">
-                <span className="result-label">🔑 TOKEN</span>
-                <div className="result-value-wrap">
-                  <code className="result-token">{result.token}</code>
-                  <button onClick={() => copyToClipboard(result.token, 'Token')} className="copy-btn">📋</button>
-                </div>
-              </div>
-
-              {result.profile && (
-                <>
-                  <div className="result-divider"></div>
-                  <div className="profile-grid">
-                    <div className="profile-item">
-                      <span className="profile-label">🌍 Negara</span>
-                      <span className="profile-value">{result.profile.country}</span>
+                  return (
+                    <div key={item.id} className="cookie-card checker-card">
+                      <div className="cookie-card-name">{item.name}</div>
+                      <div className="cookie-card-status" style={{ color: statusColor }}>{statusLabel}</div>
+                      <div className="cookie-card-actions">
+                        <button 
+                          className="btn-check" 
+                          onClick={() => handleCheckCookie(item.cookie, item.id)}
+                          disabled={status === 'checking'}
+                        >
+                          {status === 'checking' ? '⏳' : '🔍 Check'}
+                        </button>
+                        <button className="btn-delete-sm" onClick={() => handleDeleteCookie(item.id)}>✕</button>
+                      </div>
                     </div>
-                    <div className="profile-item">
-                      <span className="profile-label">💰 Mata Uang</span>
-                      <span className="profile-value">{result.profile.currency}</span>
-                    </div>
-                    <div className="profile-item">
-                      <span className="profile-label">📦 Paket</span>
-                      <span className="profile-value">{result.profile.plan}</span>
-                    </div>
-                    <div className="profile-item">
-                      <span className="profile-label">📧 Email</span>
-                      <span className="profile-value">{result.profile.email}</span>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         <footer>
           <p>© 2026 NFTOKEN</p>
         </footer>
       </div>
 
+      {/* ===== STYLES (sama seperti sebelumnya, saya ringkas agar tidak terlalu panjang) ===== */}
       <style jsx>{`
-        /* ===== RESET & GLOBAL ===== */
-        * {
-          box-sizing: border-box;
-          margin: 0;
-          padding: 0;
-        }
-
+        /* Salin semua style dari kode sebelumnya (saya sudah sertakan di bawah) */
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
           background: #0a0a0f;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -282,9 +409,8 @@ export default function Home() {
           align-items: center;
           padding: 20px;
         }
-
         .container {
-          max-width: 640px;
+          max-width: 720px;
           width: 100%;
           background: rgba(18, 18, 30, 0.92);
           backdrop-filter: blur(16px);
@@ -292,511 +418,505 @@ export default function Home() {
           border-radius: 28px;
           padding: 32px 28px;
           border: 1px solid rgba(255, 255, 255, 0.06);
-          box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.02);
+          box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7);
         }
-
-        /* ===== HEADER ===== */
         header {
           display: flex;
           justify-content: space-between;
           align-items: center;
           margin-bottom: 24px;
           padding-bottom: 16px;
-          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          border-bottom: 1px solid rgba(255,255,255,0.04);
         }
-
-        .logo {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-
-        .logo-icon {
-          font-size: 22px;
-          color: #e50914;
-          font-weight: 700;
-        }
-
+        .logo { display: flex; align-items: center; gap: 10px; }
+        .logo-icon { font-size: 22px; color: #e50914; font-weight: 700; }
         .logo-text {
-          font-size: 20px;
-          font-weight: 700;
-          letter-spacing: 1px;
+          font-size: 20px; font-weight: 700; letter-spacing: 1px;
           background: linear-gradient(135deg, #e50914, #f5a623);
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
           background-clip: text;
         }
-
         .tagline {
-          font-size: 11px;
-          font-weight: 600;
-          color: #6b7280;
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          background: rgba(255, 255, 255, 0.04);
-          padding: 4px 12px;
-          border-radius: 20px;
-          border: 1px solid rgba(255, 255, 255, 0.04);
+          font-size: 11px; font-weight: 600; color: #6b7280;
+          letter-spacing: 2px; text-transform: uppercase;
+          background: rgba(255,255,255,0.04);
+          padding: 4px 12px; border-radius: 20px;
+          border: 1px solid rgba(255,255,255,0.04);
         }
-
-        /* ===== TABS ===== */
         .tabs {
-          display: flex;
-          gap: 4px;
-          background: rgba(255, 255, 255, 0.04);
-          border-radius: 14px;
-          padding: 4px;
+          display: flex; gap: 4px;
+          background: rgba(255,255,255,0.04);
+          border-radius: 14px; padding: 4px;
           margin-bottom: 28px;
-          border: 1px solid rgba(255, 255, 255, 0.04);
+          border: 1px solid rgba(255,255,255,0.04);
         }
-
         .tab {
-          flex: 1;
-          padding: 10px 12px;
-          border: none;
-          border-radius: 11px;
-          background: transparent;
-          color: #6b7280;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.5px;
-          cursor: pointer;
-          transition: all 0.25s ease;
-          text-transform: uppercase;
+          flex: 1; padding: 10px 12px; border: none;
+          border-radius: 11px; background: transparent;
+          color: #6b7280; font-size: 12px; font-weight: 600;
+          letter-spacing: 0.5px; cursor: pointer;
+          transition: all 0.25s ease; text-transform: uppercase;
         }
-
-        .tab:hover {
-          color: #eaeef2;
-        }
-
+        .tab:hover { color: #eaeef2; }
         .tab.active {
-          background: #e50914;
-          color: #fff;
-          box-shadow: 0 4px 16px rgba(229, 9, 20, 0.3);
+          background: #e50914; color: #fff;
+          box-shadow: 0 4px 16px rgba(229,9,20,0.3);
         }
-
-        /* ===== MAIN CONTENT ===== */
-        .main-content {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-
+        .tab-content { display: flex; flex-direction: column; gap: 16px; }
         .section-label {
-          font-size: 12px;
-          font-weight: 700;
-          color: #6b7280;
-          letter-spacing: 1.5px;
-          text-transform: uppercase;
+          font-size: 12px; font-weight: 700; color: #6b7280;
+          letter-spacing: 1.5px; text-transform: uppercase;
         }
-
+        .hint {
+          font-size: 13px; color: #6b7280; margin-top: -6px;
+        }
+        .hint code {
+          background: rgba(255,255,255,0.06);
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 12px;
+        }
         .char-counter {
-          font-size: 12px;
-          color: #4b5563;
-          text-align: right;
-          margin-top: -8px;
-          font-family: 'SF Mono', 'Fira Code', monospace;
+          font-size: 12px; color: #4b5563; text-align: right;
+          margin-top: -8px; font-family: monospace;
+        }
+        .empty-msg {
+          color: #6b7280; font-size: 14px; text-align: center;
+          padding: 20px 0;
+        }
+        .loading-indicator {
+          text-align: center;
+          padding: 12px;
+          color: #f59e0b;
+          font-weight: 600;
+          font-size: 14px;
         }
 
-        /* ===== SAVED COOKIES ===== */
-        .saved-section {
-          background: rgba(255, 255, 255, 0.03);
-          border-radius: 12px;
-          padding: 12px 14px;
-          border: 1px solid rgba(255, 255, 255, 0.04);
-        }
-
-        .saved-list {
+        /* ===== UPLOAD AREA (sekarang hanya tombol Generate) ===== */
+        .upload-area {
           display: flex;
           flex-wrap: wrap;
-          gap: 6px;
-        }
-
-        .saved-item {
-          display: flex;
+          gap: 10px;
           align-items: center;
-          gap: 4px;
-          background: rgba(229, 9, 20, 0.08);
-          padding: 4px 8px 4px 12px;
+          background: rgba(255,255,255,0.02);
+          padding: 16px;
           border-radius: 16px;
-          border: 1px solid rgba(229, 9, 20, 0.12);
-          transition: all 0.15s;
+          border: 1px dashed rgba(255,255,255,0.08);
         }
-
-        .saved-item:hover {
-          background: rgba(229, 9, 20, 0.16);
-        }
-
-        .saved-name {
-          font-size: 12px;
-          font-weight: 500;
-          cursor: pointer;
-          color: #eaeef2;
-        }
-
-        .saved-name:hover {
-          color: #e50914;
-        }
-
-        .saved-item button {
-          background: transparent;
+        .btn-generate-all {
+          padding: 12px 24px;
           border: none;
+          border-radius: 12px;
+          font-size: 15px;
+          font-weight: 700;
           cursor: pointer;
-          font-size: 12px;
-          padding: 2px 4px;
-          border-radius: 4px;
-          color: #6b7280;
-          transition: all 0.15s;
+          transition: all 0.2s;
+          background: linear-gradient(135deg, #e50914, #b20710);
+          color: #fff;
+          box-shadow: 0 4px 16px rgba(229,9,20,0.25);
+        }
+        .btn-generate-all:hover:not(:disabled) {
+          transform: scale(1.02);
+          box-shadow: 0 6px 24px rgba(229,9,20,0.35);
+        }
+        .btn-generate-all:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          transform: none;
         }
 
-        .saved-item button:hover {
-          color: #eaeef2;
+        /* ===== COOKIE LIST ===== */
+        .cookie-list {
+          display: flex; flex-direction: column; gap: 12px;
+          max-height: 500px;
+          overflow-y: auto;
+          padding-right: 4px;
         }
+        .cookie-list::-webkit-scrollbar { width: 4px; }
+        .cookie-list::-webkit-scrollbar-track { background: transparent; }
+        .cookie-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px; }
 
-        .btn-delete:hover {
-          color: #e50914 !important;
+        .auto-card {
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.04);
+          border-radius: 14px;
+          padding: 14px 16px;
+          transition: all 0.2s;
         }
+        .auto-card:hover { background: rgba(255,255,255,0.05); }
+        .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .card-name { font-weight: 500; font-size: 14px; color: #eaeef2; }
+        .card-status {
+          font-size: 12px; font-weight: 600;
+          padding: 2px 10px;
+          border-radius: 20px;
+        }
+        .card-status.idle { color: #6b7280; background: rgba(255,255,255,0.04); }
+        .card-status.processing { color: #f59e0b; background: rgba(245,158,11,0.1); }
+        .card-status.done { color: #10b981; background: rgba(16,185,129,0.1); }
+        .card-status.error { color: #ef4444; background: rgba(239,68,68,0.1); }
 
-        /* ===== FORM ===== */
-        form {
+        .card-result {
+          margin-top: 10px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(255,255,255,0.04);
           display: flex;
           flex-direction: column;
-          gap: 14px;
+          gap: 6px;
         }
+        .result-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          font-size: 13px;
+        }
+        .result-row .result-label {
+          font-weight: 600;
+          color: #6b7280;
+          min-width: 80px;
+        }
+        .result-row .result-link {
+          color: #f87171;
+          text-decoration: none;
+          word-break: break-all;
+          flex: 1;
+        }
+        .result-row .result-link:hover { text-decoration: underline; }
+        .result-row .result-value {
+          color: #eaeef2;
+          word-break: break-all;
+        }
+        .card-error {
+          margin-top: 8px;
+          padding: 8px 12px;
+          background: rgba(239,68,68,0.08);
+          border-radius: 8px;
+          color: #f87171;
+          font-size: 13px;
+        }
+        .copy-btn {
+          background: rgba(255,255,255,0.04);
+          border: none;
+          font-size: 14px;
+          cursor: pointer;
+          padding: 4px 8px;
+          border-radius: 6px;
+          transition: background 0.15s;
+          color: #eaeef2;
+        }
+        .copy-btn:hover { background: rgba(255,255,255,0.1); }
 
+        /* ===== SAVED SECTION (Converter & Checker) ===== */
+        .saved-section {
+          background: rgba(255,255,255,0.03);
+          border-radius: 12px; padding: 12px 14px;
+          border: 1px solid rgba(255,255,255,0.04);
+        }
+        .saved-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .saved-item {
+          display: flex; align-items: center; gap: 4px;
+          background: rgba(229,9,20,0.08);
+          padding: 4px 8px 4px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(229,9,20,0.12);
+        }
+        .saved-item:hover { background: rgba(229,9,20,0.16); }
+        .saved-name {
+          font-size: 12px; font-weight: 500; cursor: pointer;
+          color: #eaeef2;
+        }
+        .saved-name:hover { color: #e50914; }
+        .saved-item button {
+          background: transparent; border: none; cursor: pointer;
+          font-size: 12px; padding: 2px 4px; border-radius: 4px;
+          color: #6b7280; transition: all 0.15s;
+        }
+        .saved-item button:hover { color: #eaeef2; }
+        .btn-delete:hover { color: #e50914 !important; }
+
+        .cookie-grid {
+          display: flex; flex-direction: column; gap: 10px;
+        }
+        .cookie-card {
+          display: flex; justify-content: space-between; align-items: center;
+          background: rgba(255,255,255,0.03);
+          padding: 12px 16px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.04);
+        }
+        .cookie-card:hover { background: rgba(255,255,255,0.06); border-color: rgba(229,9,20,0.2); }
+        .cookie-card-name { font-size: 14px; font-weight: 500; color: #eaeef2; }
+        .cookie-card-status { font-size: 13px; font-weight: 600; min-width: 100px; text-align: center; }
+        .cookie-card-actions { display: flex; gap: 8px; align-items: center; }
+        .btn-check {
+          padding: 6px 14px; border: none; border-radius: 8px;
+          font-size: 12px; font-weight: 600;
+          cursor: pointer; transition: all 0.2s;
+          background: #e50914; color: #fff;
+        }
+        .btn-check:hover:not(:disabled) { background: #b20710; transform: scale(1.02); }
+        .btn-check:disabled { opacity: 0.5; cursor: not-allowed; }
+        .checker-card { cursor: default; }
+        .btn-delete-sm {
+          background: transparent; border: none;
+          color: #6b7280; font-size: 14px;
+          cursor: pointer; padding: 4px 6px;
+          border-radius: 6px; transition: all 0.15s;
+        }
+        .btn-delete-sm:hover { color: #e50914; background: rgba(229,9,20,0.1); }
+
+        /* ===== FORM ===== */
         textarea {
           width: 100%;
           padding: 16px 18px;
           font-size: 13px;
           font-family: 'SF Mono', 'Fira Code', monospace;
-          border: 1.5px solid rgba(255, 255, 255, 0.06);
+          border: 1.5px solid rgba(255,255,255,0.06);
           border-radius: 16px;
-          background: rgba(255, 255, 255, 0.04);
+          background: rgba(255,255,255,0.04);
           color: #eaeef2;
           resize: vertical;
           transition: border-color 0.2s, box-shadow 0.2s;
           min-height: 140px;
           line-height: 1.7;
         }
-
-        textarea::placeholder {
-          color: #4b5563;
-        }
-
+        textarea::placeholder { color: #4b5563; }
         textarea:focus {
           outline: none;
           border-color: #e50914;
-          box-shadow: 0 0 0 4px rgba(229, 9, 20, 0.08);
+          box-shadow: 0 0 0 4px rgba(229,9,20,0.08);
         }
+        textarea:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        textarea:disabled {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .form-actions {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-        }
-
-        .save-section {
-          display: flex;
-          gap: 10px;
-        }
-
+        .form-actions { display: flex; flex-direction: column; gap: 10px; }
+        .save-section { display: flex; gap: 10px; }
         .save-section input {
           flex: 1;
           padding: 10px 14px;
           font-size: 13px;
-          border: 1.5px solid rgba(255, 255, 255, 0.06);
+          border: 1.5px solid rgba(255,255,255,0.06);
           border-radius: 12px;
-          background: rgba(255, 255, 255, 0.04);
+          background: rgba(255,255,255,0.04);
           color: #eaeef2;
           transition: border-color 0.2s;
         }
-
-        .save-section input::placeholder {
-          color: #4b5563;
-        }
-
+        .save-section input::placeholder { color: #4b5563; }
         .save-section input:focus {
           outline: none;
           border-color: #e50914;
-          box-shadow: 0 0 0 3px rgba(229, 9, 20, 0.06);
+          box-shadow: 0 0 0 3px rgba(229,9,20,0.06);
         }
-
         .btn-save {
           padding: 10px 18px;
-          font-size: 13px;
-          font-weight: 600;
-          border: none;
-          border-radius: 12px;
-          background: rgba(255, 255, 255, 0.06);
+          font-size: 13px; font-weight: 600;
+          border: none; border-radius: 12px;
+          background: rgba(255,255,255,0.06);
           color: #eaeef2;
           cursor: pointer;
           transition: all 0.2s;
           white-space: nowrap;
         }
-
-        .btn-save:hover:not(:disabled) {
-          background: rgba(255, 255, 255, 0.12);
-        }
-
-        .btn-save:disabled {
-          opacity: 0.3;
-          cursor: not-allowed;
-        }
+        .btn-save:hover:not(:disabled) { background: rgba(255,255,255,0.12); }
+        .btn-save:disabled { opacity: 0.3; cursor: not-allowed; }
 
         .btn-forge {
           width: 100%;
           padding: 16px 20px;
-          font-size: 16px;
-          font-weight: 700;
-          border: none;
-          border-radius: 14px;
+          font-size: 16px; font-weight: 700;
+          border: none; border-radius: 14px;
           background: linear-gradient(135deg, #e50914, #b20710);
           color: #fff;
           cursor: pointer;
           transition: all 0.25s ease;
           letter-spacing: 0.5px;
           text-transform: uppercase;
-          box-shadow: 0 6px 24px rgba(229, 9, 20, 0.25);
+          box-shadow: 0 6px 24px rgba(229,9,20,0.25);
         }
-
         .btn-forge:hover:not(:disabled) {
           transform: scale(1.01);
-          box-shadow: 0 8px 32px rgba(229, 9, 20, 0.35);
+          box-shadow: 0 8px 32px rgba(229,9,20,0.35);
         }
-
         .btn-forge:disabled {
-          opacity: 0.4;
-          cursor: not-allowed;
-          transform: none;
-          box-shadow: none;
+          opacity: 0.4; cursor: not-allowed;
+          transform: none; box-shadow: none;
         }
 
-        /* ===== ERROR ===== */
+        /* ===== ERROR & RESULT ===== */
         .error-box {
           padding: 14px 18px;
-          background: rgba(229, 9, 20, 0.1);
+          background: rgba(229,9,20,0.1);
           border-left: 4px solid #e50914;
           border-radius: 12px;
           color: #f87171;
           font-size: 14px;
           word-break: break-word;
         }
-
-        /* ===== RESULT ===== */
         .result-box {
           padding: 20px 22px;
-          background: rgba(16, 185, 129, 0.04);
+          background: rgba(16,185,129,0.04);
           border-radius: 16px;
-          border: 1px solid rgba(16, 185, 129, 0.08);
+          border: 1px solid rgba(16,185,129,0.08);
           animation: fadeUp 0.4s ease;
         }
-
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(12px); }
           to { opacity: 1; transform: translateY(0); }
         }
-
-        .result-header {
-          margin-bottom: 16px;
-        }
-
-        .result-badge {
-          font-size: 18px;
-          font-weight: 700;
-          color: #10b981;
-        }
-
+        .result-header { margin-bottom: 16px; }
+        .result-badge { font-size: 18px; font-weight: 700; color: #10b981; }
         .result-item {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
+          display: flex; flex-direction: column; gap: 4px;
           margin-bottom: 14px;
         }
-
         .result-label {
-          font-size: 11px;
-          font-weight: 700;
-          color: #6b7280;
-          text-transform: uppercase;
+          font-size: 11px; font-weight: 700;
+          color: #6b7280; text-transform: uppercase;
           letter-spacing: 0.5px;
         }
-
-        .result-value {
-          font-size: 14px;
-          word-break: break-all;
-          color: #eaeef2;
-        }
-
+        .result-value { font-size: 14px; word-break: break-all; color: #eaeef2; }
         .result-value-wrap {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
+          display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
         }
-
         .result-link {
-          color: #f87171;
-          text-decoration: none;
-          font-weight: 500;
-          word-break: break-all;
-          font-size: 14px;
+          color: #f87171; text-decoration: none; font-weight: 500;
+          word-break: break-all; font-size: 14px;
         }
-
-        .result-link:hover {
-          text-decoration: underline;
-        }
-
+        .result-link:hover { text-decoration: underline; }
         .result-token {
           font-family: 'SF Mono', 'Fira Code', monospace;
           font-size: 12px;
-          background: rgba(255, 255, 255, 0.04);
+          background: rgba(255,255,255,0.04);
           padding: 6px 10px;
           border-radius: 8px;
           word-break: break-all;
-          flex: 1;
-          min-width: 0;
+          flex: 1; min-width: 0;
           color: #eaeef2;
         }
-
         .copy-btn {
-          background: rgba(255, 255, 255, 0.04);
-          border: none;
-          font-size: 16px;
-          cursor: pointer;
-          padding: 6px 10px;
-          border-radius: 8px;
+          background: rgba(255,255,255,0.04);
+          border: none; font-size: 16px; cursor: pointer;
+          padding: 6px 10px; border-radius: 8px;
           transition: background 0.15s;
           flex-shrink: 0;
           color: #eaeef2;
         }
-
-        .copy-btn:hover {
-          background: rgba(255, 255, 255, 0.1);
-        }
-
+        .copy-btn:hover { background: rgba(255,255,255,0.1); }
         .result-divider {
-          border: none;
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          border: none; border-top: 1px solid rgba(255,255,255,0.04);
           margin: 16px 0 14px;
         }
-
         .profile-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 10px;
+          display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
         }
-
         .profile-item {
-          background: rgba(255, 255, 255, 0.03);
+          background: rgba(255,255,255,0.03);
           padding: 10px 12px;
           border-radius: 10px;
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          border: 1px solid rgba(255, 255, 255, 0.03);
+          display: flex; flex-direction: column; gap: 2px;
+          border: 1px solid rgba(255,255,255,0.03);
         }
-
         .profile-label {
-          font-size: 10px;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.3px;
-          color: #6b7280;
+          font-size: 10px; font-weight: 600; text-transform: uppercase;
+          letter-spacing: 0.3px; color: #6b7280;
         }
-
         .profile-value {
-          font-size: 14px;
-          font-weight: 500;
-          color: #eaeef2;
+          font-size: 14px; font-weight: 500; color: #eaeef2;
         }
 
-        /* ===== FOOTER ===== */
         footer {
-          margin-top: 28px;
-          padding-top: 16px;
-          border-top: 1px solid rgba(255, 255, 255, 0.04);
+          margin-top: 28px; padding-top: 16px;
+          border-top: 1px solid rgba(255,255,255,0.04);
           text-align: center;
         }
+        footer p { font-size: 12px; color: #4b5563; letter-spacing: 1px; }
 
-        footer p {
-          font-size: 12px;
-          color: #4b5563;
-          letter-spacing: 1px;
-        }
-
-        /* ===== RESPONSIVE ===== */
         @media (max-width: 600px) {
-          .container {
-            padding: 20px 16px;
-            border-radius: 20px;
-          }
-
-          header {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 8px;
-          }
-
-          .tagline {
-            font-size: 10px;
-          }
-
-          .tabs {
-            flex-wrap: wrap;
-          }
-
-          .tab {
-            font-size: 10px;
-            padding: 8px 10px;
-            flex: 1;
-            min-width: 60px;
-            text-align: center;
-          }
-
-          .profile-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .save-section {
-            flex-direction: column;
-          }
-
-          .btn-save {
-            width: 100%;
-            justify-content: center;
-          }
-
-          .result-item {
-            margin-bottom: 10px;
-          }
+          .container { padding: 20px 16px; border-radius: 20px; }
+          header { flex-direction: column; align-items: flex-start; gap: 8px; }
+          .tagline { font-size: 10px; }
+          .tabs { flex-wrap: wrap; }
+          .tab { font-size: 10px; padding: 8px 10px; flex: 1; min-width: 60px; text-align: center; }
+          .profile-grid { grid-template-columns: 1fr; }
+          .save-section { flex-direction: column; }
+          .btn-save { width: 100%; justify-content: center; }
+          .cookie-card { flex-wrap: wrap; gap: 8px; }
+          .cookie-card-status { min-width: auto; }
+          .upload-area { flex-direction: column; align-items: stretch; }
+          .btn-generate-all { width: 100%; justify-content: center; }
         }
-
         @media (max-width: 400px) {
-          .container {
-            padding: 14px 10px;
-          }
-
-          textarea {
-            font-size: 12px;
-            padding: 12px 14px;
-            min-height: 100px;
-          }
-
-          .btn-forge {
-            font-size: 14px;
-            padding: 14px 16px;
-          }
-
-          .result-token {
-            font-size: 11px;
-          }
+          .container { padding: 14px 10px; }
+          textarea { font-size: 12px; padding: 12px 14px; min-height: 100px; }
+          .btn-forge { font-size: 14px; padding: 14px 16px; }
+          .result-token { font-size: 11px; }
         }
       `}</style>
     </>
+  );
+}
+
+// ===== KOMPONEN RESULT DISPLAY (untuk Converter) =====
+function ResultDisplay({ result, copyToClipboard }) {
+  return (
+    <div className="result-box">
+      <div className="result-header">
+        <span className="result-badge">✅ SUKSES!</span>
+      </div>
+
+      <div className="result-item">
+        <span className="result-label">🔗 URL LOGIN</span>
+        <div className="result-value-wrap">
+          <a href={result.url} target="_blank" rel="noopener noreferrer" className="result-link">
+            {result.url}
+          </a>
+          <button onClick={() => copyToClipboard(result.url, 'Link')} className="copy-btn">📋</button>
+        </div>
+      </div>
+
+      <div className="result-item">
+        <span className="result-label">⏰ KADALUARSA</span>
+        <span className="result-value">{result.expiryHuman}</span>
+      </div>
+
+      <div className="result-item">
+        <span className="result-label">🔑 TOKEN</span>
+        <div className="result-value-wrap">
+          <code className="result-token">{result.token}</code>
+          <button onClick={() => copyToClipboard(result.token, 'Token')} className="copy-btn">📋</button>
+        </div>
+      </div>
+
+      {result.profile && (
+        <>
+          <div className="result-divider"></div>
+          <div className="profile-grid">
+            <div className="profile-item">
+              <span className="profile-label">🌍 Negara</span>
+              <span className="profile-value">{result.profile.country}</span>
+            </div>
+            <div className="profile-item">
+              <span className="profile-label">💰 Mata Uang</span>
+              <span className="profile-value">{result.profile.currency}</span>
+            </div>
+            <div className="profile-item">
+              <span className="profile-label">📦 Paket</span>
+              <span className="profile-value">{result.profile.plan}</span>
+            </div>
+            <div className="profile-item">
+              <span className="profile-label">📧 Email</span>
+              <span className="profile-value">{result.profile.email}</span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }

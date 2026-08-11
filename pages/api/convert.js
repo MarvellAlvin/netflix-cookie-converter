@@ -8,7 +8,6 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Cookie string is required' });
   }
 
-  // Validasi sederhana
   if (!cookie.includes('NetflixId=')) {
     return res.status(400).json({ error: 'Cookie tidak valid: tidak ditemukan NetflixId' });
   }
@@ -65,7 +64,6 @@ export default async function handler(req, res) {
     'x-netflix.request.client.timezoneid': 'Asia/Dhaka',
   };
 
-  // Buat URL dengan query params
   const url = new URL(API_URL);
   Object.entries(QUERY_PARAMS).forEach(([key, value]) => {
     url.searchParams.append(key, value);
@@ -77,21 +75,12 @@ export default async function handler(req, res) {
   };
 
   try {
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers,
-    });
-
+    // 1. Dapatkan token
+    const response = await fetch(url.toString(), { method: 'GET', headers });
     if (!response.ok) {
-      let errorText = await response.text();
-      let errorJson = null;
-      try { errorJson = JSON.parse(errorText); } catch (_) {}
-      return res.status(response.status).json({
-        error: `HTTP Error ${response.status}`,
-        detail: errorJson || errorText,
-      });
+      const errorText = await response.text();
+      return res.status(response.status).json({ error: `HTTP Error ${response.status}`, detail: errorText });
     }
-
     const data = await response.json();
     const tokenData = data?.value?.account?.token?.default || {};
     const token = tokenData.token;
@@ -100,11 +89,44 @@ export default async function handler(req, res) {
     if (!token) {
       return res.status(200).json({
         success: false,
-        message: 'Token tidak ditemukan. Cookie mungkin sudah kadaluarsa atau tidak valid.',
+        message: 'Token tidak ditemukan. Cookie mungkin sudah kadaluarsa.',
         debug: data,
       });
     }
 
+    // 2. Ambil informasi profil (untuk mendapatkan country)
+    let profileInfo = null;
+    try {
+      const profileUrl = new URL('https://ios.prod.ftl.netflix.com/iosui/profiles/current');
+      profileUrl.searchParams.append('appVersion', '15.48.1');
+      profileUrl.searchParams.append('esn', QUERY_PARAMS.esn);
+      profileUrl.searchParams.append('model', 'saget');
+      profileUrl.searchParams.append('modelType', 'IPHONE8-1');
+      profileUrl.searchParams.append('device_type', 'NFAPPL-02-');
+      profileUrl.searchParams.append('iosVersion', '15.8.5');
+
+      const profileHeaders = {
+        ...BASE_HEADERS,
+        Cookie: cookie.trim(),
+      };
+      const profileRes = await fetch(profileUrl.toString(), { method: 'GET', headers: profileHeaders });
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        const account = profileData?.value?.account;
+        if (account) {
+          profileInfo = {
+            country: account.country || 'Tidak diketahui',
+            currency: account.currency || 'Tidak diketahui',
+            plan: account.plan || 'Tidak diketahui',
+            email: account.email || 'Tidak diketahui',
+          };
+        }
+      }
+    } catch (_) {
+      // Abaikan jika gagal ambil profil
+    }
+
+    // Format expiry
     let expiryDate = null;
     if (expires) {
       if (typeof expires === 'number' && expires.toString().length === 13) {
@@ -121,7 +143,8 @@ export default async function handler(req, res) {
       token,
       url: `https://netflix.com/?nftoken=${token}`,
       expires: expiryDate ? expiryDate.toISOString() : null,
-      expiryHuman: expiryDate ? expiryDate.toLocaleString('id-ID') : 'Tidak diketahui',
+      expiryHuman: expiryDate ? expiryDate.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) : 'Tidak diketahui',
+      profile: profileInfo,
     });
   } catch (error) {
     return res.status(500).json({ error: 'Terjadi kesalahan server', detail: error.message });

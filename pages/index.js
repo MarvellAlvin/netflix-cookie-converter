@@ -18,10 +18,10 @@ export default function Home() {
   // ===== STATE UNTUK CHECKER =====
   const [checkResults, setCheckResults] = useState({});
 
-  // ===== STATE UNTUK AUTO GENERATE (dari backend) =====
-  const [backendCookies, setBackendCookies] = useState([]); // [{ id, name, cookie, status, token, url, expiry, profile, error }]
+  // ===== STATE UNTUK AUTO GENERATE (baru) =====
   const [autoGenLoading, setAutoGenLoading] = useState(false);
-  const [fetchingBackend, setFetchingBackend] = useState(true);
+  const [autoGenResult, setAutoGenResult] = useState(null);
+  const [autoGenError, setAutoGenError] = useState('');
 
   // ===== LOAD DARI LOCALSTORAGE (Converter) =====
   useEffect(() => {
@@ -32,40 +32,6 @@ export default function Home() {
       } catch (_) {}
     }
   }, []);
-
-  // ===== FETCH BACKEND COOKIES (Auto Generate) =====
-  useEffect(() => {
-    const fetchCookies = async () => {
-      setFetchingBackend(true);
-      try {
-        const res = await fetch('/api/cookies');
-        const data = await res.json();
-        if (res.ok && data.cookies) {
-          const list = data.cookies.map((cookieStr, index) => ({
-            id: `backend-${index}`,
-            name: `Cookie ${index + 1}`,
-            cookie: cookieStr.trim(),
-            status: 'idle', // idle | processing | done | error
-            token: null,
-            url: null,
-            expiry: null,
-            profile: null,
-            error: null,
-          }));
-          setBackendCookies(list);
-        } else {
-          setBackendCookies([]);
-        }
-      } catch (_) {
-        setBackendCookies([]);
-      } finally {
-        setFetchingBackend(false);
-      }
-    };
-    if (activeTab === 'auto') {
-      fetchCookies();
-    }
-  }, [activeTab]);
 
   const updateSavedCookies = (newList) => {
     setSavedCookies(newList);
@@ -149,33 +115,24 @@ export default function Home() {
     }
   };
 
-  // ===== AUTO GENERATE: proses semua cookie dari backend =====
-  const handleAutoGenerateAll = async () => {
-    const pending = backendCookies.filter(c => c.status === 'idle' || c.status === 'error');
-    if (pending.length === 0) {
-      alert('Semua cookie sudah diproses atau tidak ada cookie.');
-      return;
-    }
+  // ===== AUTO GENERATE (baru) =====
+  const handleAutoGenerate = async () => {
     setAutoGenLoading(true);
-    const updated = [...backendCookies];
-    for (let i = 0; i < updated.length; i++) {
-      if (updated[i].status === 'done') continue; // skip yang sudah sukses
-      updated[i].status = 'processing';
-      setBackendCookies([...updated]);
-      const result = await callConvertApi(updated[i].cookie);
-      if (result.success) {
-        updated[i].status = 'done';
-        updated[i].token = result.data.token;
-        updated[i].url = result.data.url;
-        updated[i].expiry = result.data.expiryHuman;
-        updated[i].profile = result.data.profile;
+    setAutoGenError('');
+    setAutoGenResult(null);
+    try {
+      const res = await fetch('/api/auto-generate');
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setAutoGenResult(data);
       } else {
-        updated[i].status = 'error';
-        updated[i].error = result.data?.error || 'Gagal generate token';
+        setAutoGenError(data.error || 'Gagal menghasilkan link.');
       }
-      setBackendCookies([...updated]);
+    } catch (_) {
+      setAutoGenError('Terjadi kesalahan jaringan.');
+    } finally {
+      setAutoGenLoading(false);
     }
-    setAutoGenLoading(false);
   };
 
   const copyToClipboard = (text, label) => {
@@ -217,78 +174,77 @@ export default function Home() {
         </div>
 
         {/* ============================================ */}
-        {/* TAB: AUTO GENERATE (dari backend) */}
+        {/* TAB: AUTO GENERATE (baru) */}
         {/* ============================================ */}
         {activeTab === 'auto' && (
           <div className="tab-content">
-            <div className="section-label">📋 DAFTAR COOKIE DARI BACKEND</div>
+            <div className="section-label">⚡ GENERATE LINK INSTAN</div>
             <p className="hint">
-              Cookie diambil dari file <code>data/cookies.json</code> di repo. 
-              {backendCookies.length > 0 && ` Ditemukan ${backendCookies.length} cookie.`}
+              Klik tombol di bawah untuk mendapatkan satu link NFToken dari salah satu akun yang tersedia.
             </p>
 
-            {fetchingBackend ? (
-              <div className="loading-indicator">⏳ Memuat daftar cookie...</div>
-            ) : backendCookies.length === 0 ? (
-              <p className="empty-msg">
-                Belum ada cookie di <code>data/cookies.json</code>. 
-                Tambahkan cookie di file tersebut dan redeploy.
-              </p>
-            ) : (
-              <>
-                <div className="upload-area">
-                  <button className="btn-generate-all" onClick={handleAutoGenerateAll} disabled={autoGenLoading || backendCookies.every(c => c.status === 'done')}>
-                    {autoGenLoading ? '⏳ Memproses...' : '⚡ Generate Semua'}
-                  </button>
-                  <span style={{ fontSize: '13px', color: '#6b7280', marginLeft: '8px' }}>
-                    {backendCookies.filter(c => c.status === 'done').length} / {backendCookies.length} selesai
-                  </span>
+            <div className="auto-generate-area">
+              <button
+                className="btn-generate-auto"
+                onClick={handleAutoGenerate}
+                disabled={autoGenLoading}
+              >
+                {autoGenLoading ? '⏳ Memproses...' : '⚡ Generate Link'}
+              </button>
+              {autoGenError && <div className="error-box">{autoGenError}</div>}
+            </div>
+
+            {autoGenResult && (
+              <div className="result-box">
+                <div className="result-header">
+                  <span className="result-badge">✅ SUKSES!</span>
                 </div>
 
-                <div className="cookie-list">
-                  {backendCookies.map((item) => (
-                    <div key={item.id} className="cookie-card auto-card">
-                      <div className="card-header">
-                        <span className="card-name">{item.name}</span>
-                        <span className={`card-status ${item.status}`}>
-                          {item.status === 'idle' && '⏹️ Siap'}
-                          {item.status === 'processing' && '⏳ Memproses...'}
-                          {item.status === 'done' && '✅ Selesai'}
-                          {item.status === 'error' && '❌ Gagal'}
-                        </span>
-                      </div>
-                      {item.status === 'done' && item.url && (
-                        <div className="card-result">
-                          <div className="result-row">
-                            <span className="result-label">🔗 URL</span>
-                            <a href={item.url} target="_blank" rel="noopener noreferrer" className="result-link">{item.url}</a>
-                            <button onClick={() => copyToClipboard(item.url, 'Link')} className="copy-btn">📋</button>
-                          </div>
-                          <div className="result-row">
-                            <span className="result-label">⏰ Kadaluarsa</span>
-                            <span className="result-value">{item.expiry || 'Tidak diketahui'}</span>
-                          </div>
-                          {item.profile && (
-                            <div className="result-row">
-                              <span className="result-label">🌍 Negara</span>
-                              <span className="result-value">{item.profile.country}</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {item.status === 'error' && (
-                        <div className="card-error">{item.error}</div>
-                      )}
-                    </div>
-                  ))}
+                <div className="result-item">
+                  <span className="result-label">🔗 URL LOGIN</span>
+                  <div className="result-value-wrap">
+                    <a href={autoGenResult.url} target="_blank" rel="noopener noreferrer" className="result-link">
+                      {autoGenResult.url}
+                    </a>
+                    <button onClick={() => copyToClipboard(autoGenResult.url, 'Link')} className="copy-btn">📋</button>
+                  </div>
                 </div>
-              </>
+
+                <div className="result-item">
+                  <span className="result-label">⏰ KADALUARSA</span>
+                  <span className="result-value">{autoGenResult.expiry}</span>
+                </div>
+
+                {autoGenResult.profile && (
+                  <>
+                    <div className="result-divider"></div>
+                    <div className="profile-grid">
+                      <div className="profile-item">
+                        <span className="profile-label">🌍 Negara</span>
+                        <span className="profile-value">{autoGenResult.profile.country}</span>
+                      </div>
+                      <div className="profile-item">
+                        <span className="profile-label">💰 Mata Uang</span>
+                        <span className="profile-value">{autoGenResult.profile.currency}</span>
+                      </div>
+                      <div className="profile-item">
+                        <span className="profile-label">📦 Paket</span>
+                        <span className="profile-value">{autoGenResult.profile.plan}</span>
+                      </div>
+                      <div className="profile-item">
+                        <span className="profile-label">📧 Email</span>
+                        <span className="profile-value">{autoGenResult.profile.email}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
           </div>
         )}
 
         {/* ============================================ */}
-        {/* TAB: CONVERTER (sama seperti sebelumnya) */}
+        {/* TAB: CONVERTER (tetap sama) */}
         {/* ============================================ */}
         {activeTab === 'converter' && (
           <div className="tab-content">
@@ -350,7 +306,7 @@ export default function Home() {
         )}
 
         {/* ============================================ */}
-        {/* TAB: CHECKER (sama seperti sebelumnya) */}
+        {/* TAB: CHECKER (tetap sama) */}
         {/* ============================================ */}
         {activeTab === 'checker' && (
           <div className="tab-content">
@@ -373,8 +329,8 @@ export default function Home() {
                       <div className="cookie-card-name">{item.name}</div>
                       <div className="cookie-card-status" style={{ color: statusColor }}>{statusLabel}</div>
                       <div className="cookie-card-actions">
-                        <button 
-                          className="btn-check" 
+                        <button
+                          className="btn-check"
                           onClick={() => handleCheckCookie(item.cookie, item.id)}
                           disabled={status === 'checking'}
                         >
@@ -395,9 +351,8 @@ export default function Home() {
         </footer>
       </div>
 
-      {/* ===== STYLES (sama seperti sebelumnya, saya ringkas agar tidak terlalu panjang) ===== */}
+      {/* ===== STYLES (sama seperti sebelumnya) ===== */}
       <style jsx>{`
-        /* Salin semua style dari kode sebelumnya (saya sudah sertakan di bawah) */
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
           background: #0a0a0f;
@@ -471,12 +426,6 @@ export default function Home() {
         .hint {
           font-size: 13px; color: #6b7280; margin-top: -6px;
         }
-        .hint code {
-          background: rgba(255,255,255,0.06);
-          padding: 2px 8px;
-          border-radius: 4px;
-          font-size: 12px;
-        }
         .char-counter {
           font-size: 12px; color: #4b5563; text-align: right;
           margin-top: -8px; font-family: monospace;
@@ -485,134 +434,38 @@ export default function Home() {
           color: #6b7280; font-size: 14px; text-align: center;
           padding: 20px 0;
         }
-        .loading-indicator {
-          text-align: center;
-          padding: 12px;
-          color: #f59e0b;
-          font-weight: 600;
-          font-size: 14px;
-        }
 
-        /* ===== UPLOAD AREA (sekarang hanya tombol Generate) ===== */
-        .upload-area {
+        /* ===== AUTO GENERATE AREA ===== */
+        .auto-generate-area {
           display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
+          flex-direction: column;
+          gap: 12px;
           align-items: center;
-          background: rgba(255,255,255,0.02);
-          padding: 16px;
-          border-radius: 16px;
-          border: 1px dashed rgba(255,255,255,0.08);
+          padding: 20px 0;
         }
-        .btn-generate-all {
-          padding: 12px 24px;
+        .btn-generate-auto {
+          padding: 16px 48px;
           border: none;
-          border-radius: 12px;
-          font-size: 15px;
+          border-radius: 16px;
+          font-size: 18px;
           font-weight: 700;
           cursor: pointer;
-          transition: all 0.2s;
+          transition: all 0.25s ease;
           background: linear-gradient(135deg, #e50914, #b20710);
           color: #fff;
-          box-shadow: 0 4px 16px rgba(229,9,20,0.25);
+          box-shadow: 0 6px 24px rgba(229,9,20,0.3);
+          text-transform: uppercase;
+          letter-spacing: 1px;
         }
-        .btn-generate-all:hover:not(:disabled) {
-          transform: scale(1.02);
-          box-shadow: 0 6px 24px rgba(229,9,20,0.35);
+        .btn-generate-auto:hover:not(:disabled) {
+          transform: scale(1.03);
+          box-shadow: 0 8px 32px rgba(229,9,20,0.45);
         }
-        .btn-generate-all:disabled {
-          opacity: 0.4;
+        .btn-generate-auto:disabled {
+          opacity: 0.5;
           cursor: not-allowed;
           transform: none;
         }
-
-        /* ===== COOKIE LIST ===== */
-        .cookie-list {
-          display: flex; flex-direction: column; gap: 12px;
-          max-height: 500px;
-          overflow-y: auto;
-          padding-right: 4px;
-        }
-        .cookie-list::-webkit-scrollbar { width: 4px; }
-        .cookie-list::-webkit-scrollbar-track { background: transparent; }
-        .cookie-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px; }
-
-        .auto-card {
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(255,255,255,0.04);
-          border-radius: 14px;
-          padding: 14px 16px;
-          transition: all 0.2s;
-        }
-        .auto-card:hover { background: rgba(255,255,255,0.05); }
-        .card-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-        .card-name { font-weight: 500; font-size: 14px; color: #eaeef2; }
-        .card-status {
-          font-size: 12px; font-weight: 600;
-          padding: 2px 10px;
-          border-radius: 20px;
-        }
-        .card-status.idle { color: #6b7280; background: rgba(255,255,255,0.04); }
-        .card-status.processing { color: #f59e0b; background: rgba(245,158,11,0.1); }
-        .card-status.done { color: #10b981; background: rgba(16,185,129,0.1); }
-        .card-status.error { color: #ef4444; background: rgba(239,68,68,0.1); }
-
-        .card-result {
-          margin-top: 10px;
-          padding-top: 10px;
-          border-top: 1px solid rgba(255,255,255,0.04);
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-        .result-row {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          font-size: 13px;
-        }
-        .result-row .result-label {
-          font-weight: 600;
-          color: #6b7280;
-          min-width: 80px;
-        }
-        .result-row .result-link {
-          color: #f87171;
-          text-decoration: none;
-          word-break: break-all;
-          flex: 1;
-        }
-        .result-row .result-link:hover { text-decoration: underline; }
-        .result-row .result-value {
-          color: #eaeef2;
-          word-break: break-all;
-        }
-        .card-error {
-          margin-top: 8px;
-          padding: 8px 12px;
-          background: rgba(239,68,68,0.08);
-          border-radius: 8px;
-          color: #f87171;
-          font-size: 13px;
-        }
-        .copy-btn {
-          background: rgba(255,255,255,0.04);
-          border: none;
-          font-size: 14px;
-          cursor: pointer;
-          padding: 4px 8px;
-          border-radius: 6px;
-          transition: background 0.15s;
-          color: #eaeef2;
-        }
-        .copy-btn:hover { background: rgba(255,255,255,0.1); }
 
         /* ===== SAVED SECTION (Converter & Checker) ===== */
         .saved-section {
@@ -849,8 +702,7 @@ export default function Home() {
           .btn-save { width: 100%; justify-content: center; }
           .cookie-card { flex-wrap: wrap; gap: 8px; }
           .cookie-card-status { min-width: auto; }
-          .upload-area { flex-direction: column; align-items: stretch; }
-          .btn-generate-all { width: 100%; justify-content: center; }
+          .btn-generate-auto { width: 100%; padding: 14px 24px; font-size: 16px; }
         }
         @media (max-width: 400px) {
           .container { padding: 14px 10px; }

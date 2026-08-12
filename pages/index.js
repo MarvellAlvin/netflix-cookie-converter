@@ -15,15 +15,15 @@ export default function Home() {
   const [savedCookies, setSavedCookies] = useState([]);
   const [newCookieName, setNewCookieName] = useState('');
 
-  // ===== STATE UNTUK CHECKER =====
-  const [checkResults, setCheckResults] = useState({});
+  // ===== STATE UNTUK CHECKER (dengan expiry) =====
+  const [checkResults, setCheckResults] = useState({}); // { cookieId: { status: 'valid'|'invalid'|'checking', expiry: '...' } }
 
-  // ===== STATE UNTUK AUTO GENERATE (baru) =====
+  // ===== STATE UNTUK AUTO GENERATE =====
   const [autoGenLoading, setAutoGenLoading] = useState(false);
   const [autoGenResult, setAutoGenResult] = useState(null);
   const [autoGenError, setAutoGenError] = useState('');
 
-  // ===== LOAD DARI LOCALSTORAGE (Converter) =====
+  // ===== LOAD DARI LOCALSTORAGE =====
   useEffect(() => {
     const stored = localStorage.getItem('netflix_cookies');
     if (stored) {
@@ -38,7 +38,7 @@ export default function Home() {
     localStorage.setItem('netflix_cookies', JSON.stringify(newList));
   };
 
-  // ===== FUNGSI SIMPAN COOKIE (Converter) =====
+  // ===== FUNGSI SIMPAN COOKIE =====
   const handleSaveCookie = () => {
     if (!newCookieName.trim()) {
       alert('Berikan nama untuk akun ini');
@@ -104,18 +104,30 @@ export default function Home() {
     }
   };
 
-  // ===== CHECKER =====
+  // ===== CHECKER (dengan expiry) =====
   const handleCheckCookie = async (cookieStr, cookieId) => {
-    setCheckResults(prev => ({ ...prev, [cookieId]: 'checking' }));
+    setCheckResults(prev => ({ ...prev, [cookieId]: { status: 'checking', expiry: null } }));
     const result = await callConvertApi(cookieStr);
     if (result.success) {
-      setCheckResults(prev => ({ ...prev, [cookieId]: 'valid' }));
+      setCheckResults(prev => ({
+        ...prev,
+        [cookieId]: {
+          status: 'valid',
+          expiry: result.data.expiryHuman || 'Tidak diketahui',
+        }
+      }));
     } else {
-      setCheckResults(prev => ({ ...prev, [cookieId]: 'invalid' }));
+      setCheckResults(prev => ({
+        ...prev,
+        [cookieId]: {
+          status: 'invalid',
+          expiry: null,
+        }
+      }));
     }
   };
 
-  // ===== AUTO GENERATE (baru) =====
+  // ===== AUTO GENERATE =====
   const handleAutoGenerate = async () => {
     setAutoGenLoading(true);
     setAutoGenError('');
@@ -174,7 +186,7 @@ export default function Home() {
         </div>
 
         {/* ============================================ */}
-        {/* TAB: AUTO GENERATE (baru) */}
+        {/* TAB: AUTO GENERATE (tetap sama) */}
         {/* ============================================ */}
         {activeTab === 'auto' && (
           <div className="tab-content">
@@ -244,7 +256,7 @@ export default function Home() {
         )}
 
         {/* ============================================ */}
-        {/* TAB: CONVERTER (tetap sama) */}
+        {/* TAB: CONVERTER (dengan perbaikan tampilan) */}
         {/* ============================================ */}
         {activeTab === 'converter' && (
           <div className="tab-content">
@@ -274,6 +286,7 @@ export default function Home() {
                 value={cookieInput}
                 onChange={(e) => setCookieInput(e.target.value)}
                 disabled={loading}
+                style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
               />
 
               <div className="form-actions">
@@ -301,12 +314,67 @@ export default function Home() {
             </form>
 
             {error && <div className="error-box"><strong>❌ Error:</strong> {error}</div>}
-            {result && <ResultDisplay result={result} copyToClipboard={copyToClipboard} />}
+
+            {/* Hasil Converter dengan tampilan lebih jelas */}
+            {result && (
+              <div className="result-box converter-result">
+                <div className="result-header">
+                  <span className="result-badge">✅ SUKSES!</span>
+                </div>
+
+                <div className="result-item">
+                  <span className="result-label">🔗 URL LOGIN</span>
+                  <div className="result-value-wrap">
+                    <a href={result.url} target="_blank" rel="noopener noreferrer" className="result-link">
+                      {result.url}
+                    </a>
+                    <button onClick={() => copyToClipboard(result.url, 'Link')} className="copy-btn">📋</button>
+                  </div>
+                </div>
+
+                <div className="result-item">
+                  <span className="result-label">⏰ KADALUARSA</span>
+                  <span className="result-value">{result.expiryHuman}</span>
+                </div>
+
+                <div className="result-item">
+                  <span className="result-label">🔑 TOKEN</span>
+                  <div className="result-value-wrap">
+                    <code className="result-token">{result.token}</code>
+                    <button onClick={() => copyToClipboard(result.token, 'Token')} className="copy-btn">📋</button>
+                  </div>
+                </div>
+
+                {result.profile && (
+                  <>
+                    <div className="result-divider"></div>
+                    <div className="profile-grid">
+                      <div className="profile-item">
+                        <span className="profile-label">🌍 Negara</span>
+                        <span className="profile-value">{result.profile.country}</span>
+                      </div>
+                      <div className="profile-item">
+                        <span className="profile-label">💰 Mata Uang</span>
+                        <span className="profile-value">{result.profile.currency}</span>
+                      </div>
+                      <div className="profile-item">
+                        <span className="profile-label">📦 Paket</span>
+                        <span className="profile-value">{result.profile.plan}</span>
+                      </div>
+                      <div className="profile-item">
+                        <span className="profile-label">📧 Email</span>
+                        <span className="profile-value">{result.profile.email}</span>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         )}
 
         {/* ============================================ */}
-        {/* TAB: CHECKER (tetap sama) */}
+        {/* TAB: CHECKER (dengan expiry) */}
         {/* ============================================ */}
         {activeTab === 'checker' && (
           <div className="tab-content">
@@ -316,25 +384,41 @@ export default function Home() {
             ) : (
               <div className="cookie-grid">
                 {savedCookies.map((item) => {
-                  const status = checkResults[item.id];
+                  const check = checkResults[item.id];
                   let statusLabel = '';
                   let statusColor = '';
-                  if (status === 'checking') { statusLabel = '⏳ Checking...'; statusColor = '#f59e0b'; }
-                  else if (status === 'valid') { statusLabel = '✅ Valid'; statusColor = '#10b981'; }
-                  else if (status === 'invalid') { statusLabel = '❌ Invalid'; statusColor = '#ef4444'; }
-                  else { statusLabel = '⏹️ Belum dicek'; statusColor = '#6b7280'; }
+                  let expiryLabel = '–';
+                  if (!check) {
+                    statusLabel = '⏹️ Belum dicek';
+                    statusColor = '#6b7280';
+                  } else if (check.status === 'checking') {
+                    statusLabel = '⏳ Checking...';
+                    statusColor = '#f59e0b';
+                  } else if (check.status === 'valid') {
+                    statusLabel = '✅ Valid';
+                    statusColor = '#10b981';
+                    expiryLabel = check.expiry || 'Tidak diketahui';
+                  } else {
+                    statusLabel = '❌ Invalid';
+                    statusColor = '#ef4444';
+                  }
 
                   return (
                     <div key={item.id} className="cookie-card checker-card">
-                      <div className="cookie-card-name">{item.name}</div>
+                      <div className="cookie-card-info">
+                        <div className="cookie-card-name">{item.name}</div>
+                        <div className="cookie-card-expiry" style={{ color: '#6b7280', fontSize: '12px' }}>
+                          {check && check.status === 'valid' ? `Exp: ${expiryLabel}` : expiryLabel}
+                        </div>
+                      </div>
                       <div className="cookie-card-status" style={{ color: statusColor }}>{statusLabel}</div>
                       <div className="cookie-card-actions">
                         <button
                           className="btn-check"
                           onClick={() => handleCheckCookie(item.cookie, item.id)}
-                          disabled={status === 'checking'}
+                          disabled={check?.status === 'checking'}
                         >
-                          {status === 'checking' ? '⏳' : '🔍 Check'}
+                          {check?.status === 'checking' ? '⏳' : '🔍 Check'}
                         </button>
                         <button className="btn-delete-sm" onClick={() => handleDeleteCookie(item.id)}>✕</button>
                       </div>
@@ -351,7 +435,7 @@ export default function Home() {
         </footer>
       </div>
 
-      {/* ===== STYLES (sama seperti sebelumnya) ===== */}
+      {/* ===== STYLES (diperbarui untuk kontras dan kerapian) ===== */}
       <style jsx>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -435,7 +519,7 @@ export default function Home() {
           padding: 20px 0;
         }
 
-        /* ===== AUTO GENERATE AREA ===== */
+        /* ===== AUTO GENERATE ===== */
         .auto-generate-area {
           display: flex;
           flex-direction: column;
@@ -467,66 +551,7 @@ export default function Home() {
           transform: none;
         }
 
-        /* ===== SAVED SECTION (Converter & Checker) ===== */
-        .saved-section {
-          background: rgba(255,255,255,0.03);
-          border-radius: 12px; padding: 12px 14px;
-          border: 1px solid rgba(255,255,255,0.04);
-        }
-        .saved-list { display: flex; flex-wrap: wrap; gap: 6px; }
-        .saved-item {
-          display: flex; align-items: center; gap: 4px;
-          background: rgba(229,9,20,0.08);
-          padding: 4px 8px 4px 12px;
-          border-radius: 16px;
-          border: 1px solid rgba(229,9,20,0.12);
-        }
-        .saved-item:hover { background: rgba(229,9,20,0.16); }
-        .saved-name {
-          font-size: 12px; font-weight: 500; cursor: pointer;
-          color: #eaeef2;
-        }
-        .saved-name:hover { color: #e50914; }
-        .saved-item button {
-          background: transparent; border: none; cursor: pointer;
-          font-size: 12px; padding: 2px 4px; border-radius: 4px;
-          color: #6b7280; transition: all 0.15s;
-        }
-        .saved-item button:hover { color: #eaeef2; }
-        .btn-delete:hover { color: #e50914 !important; }
-
-        .cookie-grid {
-          display: flex; flex-direction: column; gap: 10px;
-        }
-        .cookie-card {
-          display: flex; justify-content: space-between; align-items: center;
-          background: rgba(255,255,255,0.03);
-          padding: 12px 16px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.04);
-        }
-        .cookie-card:hover { background: rgba(255,255,255,0.06); border-color: rgba(229,9,20,0.2); }
-        .cookie-card-name { font-size: 14px; font-weight: 500; color: #eaeef2; }
-        .cookie-card-status { font-size: 13px; font-weight: 600; min-width: 100px; text-align: center; }
-        .cookie-card-actions { display: flex; gap: 8px; align-items: center; }
-        .btn-check {
-          padding: 6px 14px; border: none; border-radius: 8px;
-          font-size: 12px; font-weight: 600;
-          cursor: pointer; transition: all 0.2s;
-          background: #e50914; color: #fff;
-        }
-        .btn-check:hover:not(:disabled) { background: #b20710; transform: scale(1.02); }
-        .btn-check:disabled { opacity: 0.5; cursor: not-allowed; }
-        .checker-card { cursor: default; }
-        .btn-delete-sm {
-          background: transparent; border: none;
-          color: #6b7280; font-size: 14px;
-          cursor: pointer; padding: 4px 6px;
-          border-radius: 6px; transition: all 0.15s;
-        }
-        .btn-delete-sm:hover { color: #e50914; background: rgba(229,9,20,0.1); }
-
-        /* ===== FORM ===== */
+        /* ===== CONVERTER ===== */
         textarea {
           width: 100%;
           padding: 16px 18px;
@@ -540,6 +565,8 @@ export default function Home() {
           transition: border-color 0.2s, box-shadow 0.2s;
           min-height: 140px;
           line-height: 1.7;
+          white-space: pre-wrap;
+          word-break: break-all;
         }
         textarea::placeholder { color: #4b5563; }
         textarea:focus {
@@ -602,45 +629,53 @@ export default function Home() {
           transform: none; box-shadow: none;
         }
 
-        /* ===== ERROR & RESULT ===== */
-        .error-box {
-          padding: 14px 18px;
-          background: rgba(229,9,20,0.1);
-          border-left: 4px solid #e50914;
-          border-radius: 12px;
-          color: #f87171;
-          font-size: 14px;
-          word-break: break-word;
-        }
+        /* ===== RESULT BOX (Converter & Auto) ===== */
         .result-box {
           padding: 20px 22px;
-          background: rgba(16,185,129,0.04);
+          background: rgba(16,185,129,0.06);
           border-radius: 16px;
-          border: 1px solid rgba(16,185,129,0.08);
+          border: 1px solid rgba(16,185,129,0.15);
           animation: fadeUp 0.4s ease;
+        }
+        .converter-result {
+          background: rgba(16,185,129,0.05);
+          border-color: rgba(16,185,129,0.12);
         }
         @keyframes fadeUp {
           from { opacity: 0; transform: translateY(12px); }
           to { opacity: 1; transform: translateY(0); }
         }
         .result-header { margin-bottom: 16px; }
-        .result-badge { font-size: 18px; font-weight: 700; color: #10b981; }
+        .result-badge {
+          font-size: 18px; font-weight: 700; color: #10b981;
+        }
         .result-item {
           display: flex; flex-direction: column; gap: 4px;
           margin-bottom: 14px;
         }
         .result-label {
           font-size: 11px; font-weight: 700;
-          color: #6b7280; text-transform: uppercase;
+          color: #9ca3af;
+          text-transform: uppercase;
           letter-spacing: 0.5px;
         }
-        .result-value { font-size: 14px; word-break: break-all; color: #eaeef2; }
+        .result-value {
+          font-size: 14px;
+          word-break: break-all;
+          color: #eaeef2;
+        }
         .result-value-wrap {
-          display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
         }
         .result-link {
-          color: #f87171; text-decoration: none; font-weight: 500;
-          word-break: break-all; font-size: 14px;
+          color: #f87171;
+          text-decoration: none;
+          font-weight: 500;
+          word-break: break-all;
+          font-size: 14px;
         }
         .result-link:hover { text-decoration: underline; }
         .result-token {
@@ -655,17 +690,23 @@ export default function Home() {
         }
         .copy-btn {
           background: rgba(255,255,255,0.04);
-          border: none; font-size: 16px; cursor: pointer;
-          padding: 6px 10px; border-radius: 8px;
+          border: none;
+          font-size: 16px;
+          cursor: pointer;
+          padding: 6px 10px;
+          border-radius: 8px;
           transition: background 0.15s;
           flex-shrink: 0;
           color: #eaeef2;
         }
         .copy-btn:hover { background: rgba(255,255,255,0.1); }
         .result-divider {
-          border: none; border-top: 1px solid rgba(255,255,255,0.04);
+          border: none;
+          border-top: 1px solid rgba(255,255,255,0.04);
           margin: 16px 0 14px;
         }
+
+        /* ===== PROFILE GRID ===== */
         .profile-grid {
           display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
         }
@@ -684,6 +725,124 @@ export default function Home() {
           font-size: 14px; font-weight: 500; color: #eaeef2;
         }
 
+        /* ===== CHECKER ===== */
+        .cookie-grid {
+          display: flex; flex-direction: column; gap: 10px;
+        }
+        .cookie-card {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: rgba(255,255,255,0.03);
+          padding: 12px 16px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.04);
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+        .cookie-card:hover {
+          background: rgba(255,255,255,0.06);
+          border-color: rgba(229,9,20,0.2);
+        }
+        .cookie-card-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          flex: 1;
+          min-width: 120px;
+        }
+        .cookie-card-name {
+          font-size: 14px;
+          font-weight: 500;
+          color: #eaeef2;
+        }
+        .cookie-card-expiry {
+          font-size: 12px;
+          color: #6b7280;
+        }
+        .cookie-card-status {
+          font-size: 13px;
+          font-weight: 600;
+          min-width: 100px;
+          text-align: center;
+        }
+        .cookie-card-actions {
+          display: flex; gap: 8px; align-items: center;
+        }
+        .btn-check {
+          padding: 6px 14px;
+          border: none;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+          background: #e50914;
+          color: #fff;
+        }
+        .btn-check:hover:not(:disabled) {
+          background: #b20710;
+          transform: scale(1.02);
+        }
+        .btn-check:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .checker-card { cursor: default; }
+        .btn-delete-sm {
+          background: transparent;
+          border: none;
+          color: #6b7280;
+          font-size: 14px;
+          cursor: pointer;
+          padding: 4px 6px;
+          border-radius: 6px;
+          transition: all 0.15s;
+        }
+        .btn-delete-sm:hover {
+          color: #e50914;
+          background: rgba(229,9,20,0.1);
+        }
+
+        /* ===== SAVED SECTION (Converter) ===== */
+        .saved-section {
+          background: rgba(255,255,255,0.03);
+          border-radius: 12px; padding: 12px 14px;
+          border: 1px solid rgba(255,255,255,0.04);
+        }
+        .saved-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .saved-item {
+          display: flex; align-items: center; gap: 4px;
+          background: rgba(229,9,20,0.08);
+          padding: 4px 8px 4px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(229,9,20,0.12);
+        }
+        .saved-item:hover { background: rgba(229,9,20,0.16); }
+        .saved-name {
+          font-size: 12px; font-weight: 500; cursor: pointer;
+          color: #eaeef2;
+        }
+        .saved-name:hover { color: #e50914; }
+        .saved-item button {
+          background: transparent; border: none; cursor: pointer;
+          font-size: 12px; padding: 2px 4px; border-radius: 4px;
+          color: #6b7280; transition: all 0.15s;
+        }
+        .saved-item button:hover { color: #eaeef2; }
+        .btn-delete:hover { color: #e50914 !important; }
+
+        /* ===== ERROR ===== */
+        .error-box {
+          padding: 14px 18px;
+          background: rgba(229,9,20,0.1);
+          border-left: 4px solid #e50914;
+          border-radius: 12px;
+          color: #f87171;
+          font-size: 14px;
+          word-break: break-word;
+        }
+
         footer {
           margin-top: 28px; padding-top: 16px;
           border-top: 1px solid rgba(255,255,255,0.04);
@@ -700,8 +859,8 @@ export default function Home() {
           .profile-grid { grid-template-columns: 1fr; }
           .save-section { flex-direction: column; }
           .btn-save { width: 100%; justify-content: center; }
-          .cookie-card { flex-wrap: wrap; gap: 8px; }
-          .cookie-card-status { min-width: auto; }
+          .cookie-card { flex-direction: column; align-items: flex-start; }
+          .cookie-card-status { min-width: auto; text-align: left; }
           .btn-generate-auto { width: 100%; padding: 14px 24px; font-size: 16px; }
         }
         @media (max-width: 400px) {
@@ -715,60 +874,5 @@ export default function Home() {
   );
 }
 
-// ===== KOMPONEN RESULT DISPLAY (untuk Converter) =====
-function ResultDisplay({ result, copyToClipboard }) {
-  return (
-    <div className="result-box">
-      <div className="result-header">
-        <span className="result-badge">✅ SUKSES!</span>
-      </div>
-
-      <div className="result-item">
-        <span className="result-label">🔗 URL LOGIN</span>
-        <div className="result-value-wrap">
-          <a href={result.url} target="_blank" rel="noopener noreferrer" className="result-link">
-            {result.url}
-          </a>
-          <button onClick={() => copyToClipboard(result.url, 'Link')} className="copy-btn">📋</button>
-        </div>
-      </div>
-
-      <div className="result-item">
-        <span className="result-label">⏰ KADALUARSA</span>
-        <span className="result-value">{result.expiryHuman}</span>
-      </div>
-
-      <div className="result-item">
-        <span className="result-label">🔑 TOKEN</span>
-        <div className="result-value-wrap">
-          <code className="result-token">{result.token}</code>
-          <button onClick={() => copyToClipboard(result.token, 'Token')} className="copy-btn">📋</button>
-        </div>
-      </div>
-
-      {result.profile && (
-        <>
-          <div className="result-divider"></div>
-          <div className="profile-grid">
-            <div className="profile-item">
-              <span className="profile-label">🌍 Negara</span>
-              <span className="profile-value">{result.profile.country}</span>
-            </div>
-            <div className="profile-item">
-              <span className="profile-label">💰 Mata Uang</span>
-              <span className="profile-value">{result.profile.currency}</span>
-            </div>
-            <div className="profile-item">
-              <span className="profile-label">📦 Paket</span>
-              <span className="profile-value">{result.profile.plan}</span>
-            </div>
-            <div className="profile-item">
-              <span className="profile-label">📧 Email</span>
-              <span className="profile-value">{result.profile.email}</span>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
+// ===== KOMPONEN RESULT DISPLAY (tidak digunakan lagi karena sudah inline di Converter) =====
+// (Saya hapus karena hasil Converter sekarang sudah di-render langsung di dalam tab)

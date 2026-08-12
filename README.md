@@ -14,12 +14,11 @@ Aplikasi web interaktif untuk mengubah cookie Netflix menjadi tautan akses insta
 1. Tentang Proyek
 2. Fitur Utama
 3. Teknologi yang Digunakan
-4. Struktur Proyek
-5. Cara Menjalankan di Lokal
-6. Cara Deploy ke Vercel
-7. Panduan Penggunaan
-8. Disclaimer & Etika
-9. Lisensi
+4. Cara Menjalankan di Lokal
+5. Cara Deploy ke Vercel
+6. Panduan Penggunaan
+7. Disclaimer & Etika
+8. Lisensi
 
 ---
 
@@ -67,30 +66,6 @@ Tujuan:
 | Vercel | Platform hosting dan deployment dengan serverless functions. |
 | CSS-in-JS | Styling menggunakan built-in CSS Next.js (styled-jsx). |
 | LocalStorage API | Penyimpanan data cookie di sisi klien. |
-
----
-
-## 📁 Struktur Proyek
-
-netflix-cookie-converter/
-├── data/
-│   └── cookies.json               # Daftar cookie untuk Auto Generate
-├── pages/
-│   ├── api/
-│   │   ├── auto-generate.js       # Endpoint: generate token dari cookie acak
-│   │   ├── convert.js             # Endpoint: konversi cookie → token
-│   │   └── cookies.js             # Endpoint: baca daftar cookie dari file
-│   └── index.js                   # Halaman utama (UI lengkap)
-├── styles/
-│   └── globals.css                # CSS global
-├── package.json                   # Dependensi dan skrip
-├── vercel.json                    # Konfigurasi Vercel
-└── README.md                      # Dokumentasi (file ini)
-**Penjelasan:**
-- `data/cookies.json`: Array string cookie untuk Auto Generate.
-- `pages/api/`: Serverless functions backend.
-- `pages/index.js`: UI lengkap dengan 3 fitur.
-- `vercel.json`: Konfigurasi timeout untuk serverless functions.
 
 ---
 
